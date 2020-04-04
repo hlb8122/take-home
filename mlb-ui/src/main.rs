@@ -8,14 +8,17 @@ use sdl2::{
     event::Event,
     image::{InitFlag, LoadTexture},
     keyboard::Keycode,
+    pixels::Color,
     rect::Rect,
     render::{RenderTarget, Texture, TextureCreator},
+    ttf::Font,
     video::WindowContext,
 };
 
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
 
 const BACKGROUND_PATH: &str = "./assets/background.jpg";
+const FONT_PATH: &str = "./assets/RobotoMono-Regular.ttf";
 
 pub struct GfxState<'a> {
     window_width: u32,
@@ -24,7 +27,7 @@ pub struct GfxState<'a> {
     item_height: u32,
     item_padding: u32,
     texture_creator: &'a TextureCreator<WindowContext>,
-    selected: i32,
+    selected: usize,
     shift: i32,
     textures: Option<Vec<Texture<'a>>>,
     n_games: usize,
@@ -36,8 +39,8 @@ impl<'a> GfxState<'a> {
         window_height: u32,
         texture_creator: &'a TextureCreator<WindowContext>,
     ) -> Self {
-        let item_padding = window_width / 26;
-        let item_width = window_width / 8;
+        let item_padding = window_width / 40;
+        let item_width = window_width / 10;
         let item_height = item_width * 9 / 16;
 
         GfxState {
@@ -56,7 +59,7 @@ impl<'a> GfxState<'a> {
 
     /// Shift selection right
     fn selection_right(&mut self) {
-        self.selected += 1;
+        self.selected = (self.selected + 1) % self.n_games;
 
         if self.selected() == 0 {
             self.shift = 0;
@@ -73,7 +76,11 @@ impl<'a> GfxState<'a> {
 
     /// Shift selection right
     fn selection_left(&mut self) {
-        self.selected -= 1;
+        if self.selected == 0 {
+            self.selected = self.n_games - 1;
+        } else {
+            self.selected -= 1;
+        }
 
         if self.selected() == 0 {
             self.shift = 0;
@@ -81,7 +88,7 @@ impl<'a> GfxState<'a> {
         }
 
         if self.selected() == self.n_games - 1 {
-            self.shift -= (self.n_games as i32 - 5) * (self.item_width + self.item_padding) as i32;
+            self.shift -= (self.n_games as i32 - 7) * (self.item_width + self.item_padding) as i32;
             return;
         }
 
@@ -96,7 +103,7 @@ impl<'a> GfxState<'a> {
     }
 
     fn selected(&self) -> usize {
-        self.selected as usize % self.n_games
+        self.selected
     }
 
     fn get_texture_mut(&mut self, index: usize) -> Option<&mut Texture<'a>> {
@@ -124,11 +131,13 @@ impl<'a> GfxState<'a> {
         let y = (self.window_height / 3) as i32;
         let game_index_i32 = game_index as i32;
         if game_index < self.selected() {
+            // Less than selected index
             let x = self.shift
                 + self.item_padding as i32
                 + (game_index_i32 * (self.item_padding + self.item_width) as i32);
             Rect::new(x, y, self.item_width, self.item_height)
         } else if game_index == self.selected() {
+            // Selected index
             let x = self.shift
                 + self.item_padding as i32
                 + (game_index_i32 * (self.item_padding + self.item_width) as i32);
@@ -136,11 +145,12 @@ impl<'a> GfxState<'a> {
             let enlarged_item_height = self.item_height * 3 / 2;
             Rect::new(
                 x as i32,
-                (y - (enlarged_item_height / 4) as i32),
+                y - (enlarged_item_height / 4) as i32,
                 enlarged_item_width,
                 enlarged_item_height,
             )
         } else {
+            // More than selected index
             let enlarged_item_width = self.item_width as i32 * 3 / 2;
             let x = self.shift
                 + self.item_padding as i32
@@ -151,6 +161,29 @@ impl<'a> GfxState<'a> {
             Rect::new(x as i32, y as i32, self.item_width, self.item_height)
         }
     }
+}
+
+fn get_loading_texture<'a, 'ttf>(
+    font: &Font<'ttf, 'static>,
+    start: Instant,
+    texture_creator: &'a TextureCreator<WindowContext>,
+) -> Result<Texture<'a>, String> {
+    let now = Instant::now();
+    let millis = now.duration_since(start).as_millis() % 1500;
+    let text = if millis < 1500 / 3 {
+        "Fetching Games.  "
+    } else if millis < 1500 * 2 / 3 {
+        "Fetching Games.. "
+    } else {
+        "Fetching Games..."
+    };
+    let loading_surface = font
+        .render(text)
+        .blended(Color::RGBA(255, 255, 255, 255))
+        .map_err(|e| e.to_string())?;
+    texture_creator
+        .create_texture_from_surface(&loading_surface)
+        .map_err(|e| e.to_string())
 }
 
 #[tokio::main]
@@ -194,6 +227,23 @@ pub async fn main() -> Result<(), String> {
 
     // Initialize graphics state
     let mut gfx_state = GfxState::new(window_width, window_height, &texture_creator);
+    let start_time = Instant::now();
+
+    // Load font
+    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
+    let mut font = ttf_context.load_font(Path::new(FONT_PATH), 256)?;
+    font.set_kerning(true);
+    // font.set_style(sdl2::ttf::FontStyle::);
+
+    // Loading text rect
+    let loading_width = window_width / 5;
+    let loading_height = window_height / 16;
+    let loading_rect = Rect::new(
+        (window_width - loading_width) as i32 / 2,
+        (window_height - loading_height) as i32 / 2,
+        loading_width,
+        loading_height,
+    );
 
     'mainloop: loop {
         // Reset canvas
@@ -208,6 +258,8 @@ pub async fn main() -> Result<(), String> {
             }
             NetworkState::FetchingJson => {
                 // Displaying loading page
+                let loading_texture = get_loading_texture(&font, start_time, &texture_creator)?;
+                canvas.copy(&loading_texture, None, Some(loading_rect))?;
             }
             NetworkState::FetchingImages(thumbnails, image_map) => {
                 // Initialize if required
@@ -217,10 +269,10 @@ pub async fn main() -> Result<(), String> {
                 // Display games
                 for i in 0..n_games {
                     let rectangle = gfx_state.get_rectangle(i);
-                    let texture = gfx_state.get_texture_mut(i).unwrap();
-                    // texture
-                    //     .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
-                    //     .map_err(|err| err.to_string())?;
+                    let texture = gfx_state.get_texture_mut(i).unwrap(); // This is safe after initialization
+                                                                         // texture
+                                                                         //     .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
+                                                                         //     .map_err(|err| err.to_string())?;
                     canvas.copy(texture, None, rectangle)?;
                 }
             }
@@ -228,10 +280,7 @@ pub async fn main() -> Result<(), String> {
                 // Display games
                 for i in 0..gfx_state.n_games() {
                     let rectangle = gfx_state.get_rectangle(i);
-                    let texture = gfx_state.get_texture_mut(i).unwrap();
-                    // texture
-                    //     .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
-                    //     .map_err(|err| err.to_string())?;
+                    let texture = gfx_state.get_texture_mut(i).unwrap(); // This is safe after initialization
                     canvas.copy(texture, None, rectangle)?;
                 }
             }
@@ -242,23 +291,24 @@ pub async fn main() -> Result<(), String> {
         // Check events
         for event in sdl_context.event_pump()?.poll_iter() {
             match event {
+                // Escape
                 Event::Quit { .. }
                 | Event::KeyDown {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'mainloop,
+                // Key right
                 Event::KeyDown {
                     keycode: Some(Keycode::Right),
                     ..
                 } => {
-                    // Key right
                     gfx_state.selection_right();
                 }
+                // Key left
                 Event::KeyDown {
                     keycode: Some(Keycode::Left),
                     ..
                 } => {
-                    // Key left
                     gfx_state.selection_left();
                 }
                 _ => {}

@@ -9,6 +9,6 @@ client = { package = 'mlb-client',  path = '../mlb-client' }
 
 futures = "0.3.4"
 parking_lot = "0.10.0"
-sdl2 = { version = "0.33.0", features = ["image"] }
+sdl2 = { version = "0.33.0", features = ["image", "ttf"] }
 time = "0.2.9"
 tokio = { version = "0.2.16", features = ["macros", "rt-threaded"] }
