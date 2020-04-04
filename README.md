@@ -5,7 +5,7 @@
 ### Debian/Ubuntu
 
 ```bash
-sudo apt-get install libsdl2-dev
+sudo apt install libsdl2-dev libsdl2-image-dev
 cargo build --release
 ```
 
