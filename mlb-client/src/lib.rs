@@ -41,3 +41,28 @@ impl MlbClient {
         self.get_schedule_via_date(&Date::today()).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn santity_fetch_schedule() {
+        let client = MlbClient::new();
+        let today = time::date!(2018 - 06 - 10);
+        let schedule = client.get_schedule_via_date(&today).await;
+
+        assert!(schedule.is_ok())
+    }
+
+    #[tokio::test]
+    async fn santity_fetch_schedule_today() {
+        let client = MlbClient::new();
+        let schedule_today = client.get_schedule_today().await.unwrap();
+
+        let today = Date::today();
+        let schedule = client.get_schedule_via_date(&today).await.unwrap();
+
+        assert_eq!(schedule, schedule_today)
+    }
+}
