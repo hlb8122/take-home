@@ -1,78 +1,68 @@
-use client::{types::ThumbnailData, MlbClient};
+pub mod networking;
 
-use futures::prelude::*;
+use client::{types::ThumbnailData, MlbClient};
+use networking::NetworkState;
+
 use parking_lot::RwLock;
 use sdl2::{
     event::Event,
     image::{InitFlag, LoadTexture},
     keyboard::Keycode,
+    rect::Rect,
+    render::{RenderTarget, Texture, TextureCreator},
+    video::WindowContext,
 };
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 const BACKGROUND_PATH: &str = "./assets/background.jpg";
 
-#[derive(Debug)]
-pub enum MainState {
-    FetchingJson,
-    FetchingImages(Vec<ThumbnailData>, HashMap<usize, Result<Vec<u8>, String>>),
-    Error,
+const TEXTURE_WIDTH: u32 = 320;
+const TEXTURE_HEIGHT: u32 = 180;
+const N_TEXTURE_PIXELS: usize = (TEXTURE_HEIGHT * TEXTURE_WIDTH) as usize;
+
+pub struct GfxState<'a> {
+    texture_creator: &'a TextureCreator<WindowContext>,
+    selected: usize,
+    textures: Option<Vec<Texture<'a>>>,
 }
 
-async fn startup_procedure(client: MlbClient, main_state: Arc<RwLock<MainState>>) {
-    let example_date = time::date!(2018 - 06 - 10);
-    match client.get_schedule_via_date(&example_date).await {
-        Err(err) => {
-            // Reached error state - no thumbnail data found
-            *main_state.write() = MainState::Error;
-            return;
+impl<'a> GfxState<'a> {
+    fn new(texture_creator: &'a TextureCreator<WindowContext>) -> Self {
+        GfxState {
+            texture_creator,
+            selected: 0,
+            textures: None,
         }
-        Ok(schedule) => {
-            // Collect thumbnail data
-            let mut thumbnail_data = schedule.into_thumbnail_data();
-            let thumbnails = match thumbnail_data.pop() {
-                Some(some) => some,
-                None => {
-                    // Reached error state - no thumbnail data found
-                    *main_state.write() = MainState::Error;
-                    return;
-                }
-            };
+    }
 
-            // Collect image URLs
-            let image_urls: Vec<Option<String>> = thumbnails
-                .iter()
-                .map(move |thumbnail| thumbnail.photos.get("684x385").cloned())
-                .collect();
+    /// Get reference to vector of textures.
+    ///
+    /// This will panic if unitialized.
+    fn get_textures(&self) -> &Vec<Texture<'a>> {
+        self.textures.as_ref().unwrap()
+    }
 
-            let image_map = HashMap::with_capacity(thumbnails.len());
-            *main_state.write() = MainState::FetchingImages(thumbnails, image_map);
+    /// Get reference to vector of textures.
+    ///
+    /// This will panic if unitialized.
+    fn get_textures_mut(&mut self) -> &mut Vec<Texture<'a>> {
+        self.textures.as_mut().unwrap()
+    }
 
-            // Join all image fetching futures
-            let image_fetching = future::join_all(image_urls.iter().enumerate().map(|(i, url)| {
-                println!("{:?}", url);
-                let client_inner = client.clone();
-                let main_state_inner = main_state.clone();
-                async move {
-                    let image_raw = if let Some(url) = url {
-                        client_inner
-                            .get_image(url)
-                            .await
-                            .map_err(|err| err.to_string())
-                    } else {
-                        Err("URL not found".to_string())
-                    };
-
-                    // If in fetching images state then insert image
-                    match &mut *main_state_inner.write() {
-                        MainState::FetchingImages(_, image_map) => {
-                            image_map.insert(i, image_raw);
-                        }
-                        _ => (),
-                    }
-                }
-            }));
-            image_fetching.await;
+    /// Initialize textures
+    fn init(&mut self, n_games: usize) {
+        // Don't re-initialize
+        if self.textures.is_none() {
+            let mut textures = Vec::with_capacity(n_games);
+            for i in 0..n_games {
+                let texture = self
+                    .texture_creator
+                    .create_texture_static(None, TEXTURE_WIDTH, TEXTURE_HEIGHT)
+                    .unwrap();
+                textures.push(texture);
+            }
+            self.textures = Some(textures);
         }
     }
 }
@@ -105,28 +95,87 @@ pub async fn main() -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     let texture_creator = canvas.texture_creator();
-    let texture = texture_creator.load_texture(background_path)?;
+    let background_texture = texture_creator.load_texture(background_path)?;
 
-    canvas.copy(&texture, None, None)?;
     canvas.present();
 
     // Initialize MLB client
     let client = MlbClient::new();
 
     // Initialize program state
-    let main_state = Arc::new(RwLock::new(MainState::FetchingJson));
+    let network_state = Arc::new(RwLock::new(NetworkState::FetchingJson));
 
-    let startup_task = startup_procedure(client.clone(), main_state.clone());
+    let startup_task = networking::startup_procedure(client.clone(), network_state.clone());
     tokio::spawn(startup_task);
 
+    // Initialize graphics state
+    let mut gfx_state = GfxState::new(&texture_creator);
+
     'mainloop: loop {
+        // Reset canvas
+        canvas.clear();
+
+        // Render background texture
+        canvas.copy(&background_texture, None, None)?;
+
+        match &*network_state.read() {
+            NetworkState::Error => {
+                // Display error page
+            }
+            NetworkState::FetchingJson => {
+                // Displaying loading page
+            }
+            NetworkState::FetchingImages(thumbnails, image_map) => {
+                // Initialize if required
+                let n_games = thumbnails.len();
+                gfx_state.init(n_games);
+
+                // Display games
+                for texture in gfx_state.get_textures_mut() {
+                    texture
+                        .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
+                        .map_err(|err| err.to_string())?;
+                    let rectangle = Rect::new(300, 300, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+                    canvas.copy(texture, None, rectangle)?;
+                }
+            }
+            NetworkState::Done => {
+                // Display games
+                for texture in gfx_state.get_textures_mut() {
+                    texture
+                        .update(None, &[255; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
+                        .map_err(|err| err.to_string())?;
+                    let rectangle = Rect::new(300, 300, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+                    println!("{:?}", rectangle);
+                    canvas.copy(texture, None, rectangle)?;
+                }
+            }
+        }
+
+        canvas.present();
+
+        // Check events
         for event in sdl_context.event_pump()?.poll_iter() {
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {
-                    keycode: Option::Some(Keycode::Escape),
+                    keycode: Some(Keycode::Escape),
                     ..
                 } => break 'mainloop,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Right),
+                    ..
+                } => {
+                    // Key right
+                    println!("pressed right");
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Left),
+                    ..
+                } => {
+                    // Key left
+                    println!("pressed left");
+                }
                 _ => {}
             }
         }
