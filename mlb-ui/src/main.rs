@@ -25,6 +25,7 @@ pub struct GfxState<'a> {
     item_padding: u32,
     texture_creator: &'a TextureCreator<WindowContext>,
     selected: i32,
+    shift: i32,
     textures: Option<Vec<Texture<'a>>>,
     n_games: usize,
 }
@@ -35,8 +36,8 @@ impl<'a> GfxState<'a> {
         window_height: u32,
         texture_creator: &'a TextureCreator<WindowContext>,
     ) -> Self {
-        let item_padding = window_width / 32;
-        let item_width = (window_width + item_padding) / 8;
+        let item_padding = window_width / 26;
+        let item_width = window_width / 8;
         let item_height = item_width * 9 / 16;
 
         GfxState {
@@ -47,6 +48,7 @@ impl<'a> GfxState<'a> {
             item_padding,
             texture_creator,
             selected: 0,
+            shift: 0,
             textures: None,
             n_games: 0,
         }
@@ -55,11 +57,38 @@ impl<'a> GfxState<'a> {
     /// Shift selection right
     fn selection_right(&mut self) {
         self.selected += 1;
+
+        if self.selected() == 0 {
+            self.shift = 0;
+            return;
+        }
+
+        let selected_rectangle = self.get_rectangle(self.selected());
+        if selected_rectangle.right() + (self.item_width / 2 + self.item_padding) as i32
+            > self.window_width as i32
+        {
+            self.shift -= (self.item_width + self.item_padding) as i32;
+        }
     }
 
     /// Shift selection right
     fn selection_left(&mut self) {
         self.selected -= 1;
+
+        if self.selected() == 0 {
+            self.shift = 0;
+            return;
+        }
+
+        if self.selected() == self.n_games - 1 {
+            self.shift -= (self.n_games as i32 - 5) * (self.item_width + self.item_padding) as i32;
+            return;
+        }
+
+        let selected_rectangle = self.get_rectangle(self.selected());
+        if selected_rectangle.left() < (self.item_width / 2 + self.item_padding) as i32 {
+            self.shift += (self.item_width + self.item_padding) as i32;
+        }
     }
 
     fn n_games(&self) -> usize {
@@ -67,7 +96,7 @@ impl<'a> GfxState<'a> {
     }
 
     fn selected(&self) -> usize {
-        (self.selected % self.n_games as i32) as usize
+        self.selected as usize % self.n_games
     }
 
     fn get_texture_mut(&mut self, index: usize) -> Option<&mut Texture<'a>> {
@@ -92,27 +121,33 @@ impl<'a> GfxState<'a> {
     }
 
     fn get_rectangle(&self, game_index: usize) -> Rect {
-        let y = self.window_height / 3;
-        let game_index_u32 = game_index as u32;
+        let y = (self.window_height / 3) as i32;
+        let game_index_i32 = game_index as i32;
         if game_index < self.selected() {
-            let x = self.item_padding + game_index_u32 * (self.item_padding + self.item_width);
-            Rect::new(x as i32, y as i32, self.item_width, self.item_height)
+            let x = self.shift
+                + self.item_padding as i32
+                + (game_index_i32 * (self.item_padding + self.item_width) as i32);
+            Rect::new(x, y, self.item_width, self.item_height)
         } else if game_index == self.selected() {
-            let x = self.item_padding + game_index_u32 * (self.item_padding + self.item_width);
+            let x = self.shift
+                + self.item_padding as i32
+                + (game_index_i32 * (self.item_padding + self.item_width) as i32);
             let enlarged_item_width = self.item_width * 3 / 2;
             let enlarged_item_height = self.item_height * 3 / 2;
             Rect::new(
                 x as i32,
-                (y - (enlarged_item_height * 1 / 4)) as i32,
+                (y - (enlarged_item_height / 4) as i32),
                 enlarged_item_width,
                 enlarged_item_height,
             )
         } else {
-            let enlarged_item_width = self.item_width * 3 / 2;
-            let x = self.item_padding
-                + enlarged_item_width + self.item_padding
-                + (game_index_u32) * (self.item_padding + self.item_width)
-                - (self.item_padding + self.item_width);
+            let enlarged_item_width = self.item_width as i32 * 3 / 2;
+            let x = self.shift
+                + self.item_padding as i32
+                + enlarged_item_width
+                + self.item_padding as i32
+                + (game_index_i32 * (self.item_padding + self.item_width) as i32)
+                - (self.item_padding + self.item_width) as i32;
             Rect::new(x as i32, y as i32, self.item_width, self.item_height)
         }
     }
