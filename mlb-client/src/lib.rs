@@ -1,6 +1,6 @@
 pub mod types;
 
-use reqwest::{Client, Error};
+use reqwest::{Client, Error, IntoUrl};
 pub use time::Date;
 
 use types::*;
@@ -10,7 +10,7 @@ const HYDRATE_ARGS: &str = "game(content(editorial(recap))),decisions";
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
 /// Client providing HTTP requests to the mlb API.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct MlbClient {
     client: Client,
 }
@@ -40,6 +40,10 @@ impl MlbClient {
         // TODO: Double check timezones
         self.get_schedule_via_date(&Date::today()).await
     }
+
+    pub async fn get_image<T: IntoUrl>(&self, url: T) -> Result<Vec<u8>, Error> {
+        Ok(self.client.get(url).send().await?.bytes().await?.to_vec())
+    }
 }
 
 #[cfg(test)]
@@ -49,8 +53,8 @@ mod tests {
     #[tokio::test]
     async fn santity_fetch_schedule() {
         let client = MlbClient::new();
-        let today = time::date!(2018 - 06 - 10);
-        let schedule = client.get_schedule_via_date(&today).await;
+        let example_date = time::date!(2018 - 06 - 10);
+        let schedule = client.get_schedule_via_date(&example_date).await;
 
         assert!(schedule.is_ok())
     }
