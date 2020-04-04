@@ -13,12 +13,12 @@ pub enum NetworkState {
     Done,
 }
 
-pub async fn startup_procedure(client: MlbClient, main_state: Arc<RwLock<NetworkState>>) {
+pub async fn startup_procedure(client: MlbClient, state: Arc<RwLock<NetworkState>>) {
     let example_date = time::date!(2018 - 06 - 10);
     match client.get_schedule_via_date(&example_date).await {
         Err(err) => {
             // Reached error state - no thumbnail data found
-            *main_state.write() = NetworkState::Error;
+            *state.write() = NetworkState::Error;
             return;
         }
         Ok(schedule) => {
@@ -28,7 +28,7 @@ pub async fn startup_procedure(client: MlbClient, main_state: Arc<RwLock<Network
                 Some(some) => some,
                 None => {
                     // Reached error state - no thumbnail data found
-                    *main_state.write() = NetworkState::Error;
+                    *state.write() = NetworkState::Error;
                     return;
                 }
             };
@@ -40,13 +40,12 @@ pub async fn startup_procedure(client: MlbClient, main_state: Arc<RwLock<Network
                 .collect();
 
             let image_map = HashMap::with_capacity(thumbnails.len());
-            *main_state.write() = NetworkState::FetchingImages(thumbnails, image_map);
+            *state.write() = NetworkState::FetchingImages(thumbnails, image_map);
 
             // Join all image fetching futures
             let image_fetching = future::join_all(image_urls.iter().enumerate().map(|(i, url)| {
-                println!("{:?}", url);
                 let client_inner = client.clone();
-                let main_state_inner = main_state.clone();
+                let state_inner = state.clone();
                 async move {
                     let image_raw = if let Some(url) = url {
                         client_inner
@@ -58,7 +57,7 @@ pub async fn startup_procedure(client: MlbClient, main_state: Arc<RwLock<Network
                     };
 
                     // If in fetching images state then insert image
-                    match &mut *main_state_inner.write() {
+                    match &mut *state_inner.write() {
                         NetworkState::FetchingImages(_, image_map) => {
                             image_map.insert(i, image_raw);
                         }
@@ -68,7 +67,7 @@ pub async fn startup_procedure(client: MlbClient, main_state: Arc<RwLock<Network
             }));
             image_fetching.await;
 
-            *main_state.write() = NetworkState::Done;
+            *state.write() = NetworkState::Done;
         }
     }
 }
