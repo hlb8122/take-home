@@ -17,37 +17,61 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 const BACKGROUND_PATH: &str = "./assets/background.jpg";
 
-const TEXTURE_WIDTH: u32 = 320;
-const TEXTURE_HEIGHT: u32 = 180;
-const N_TEXTURE_PIXELS: usize = (TEXTURE_HEIGHT * TEXTURE_WIDTH) as usize;
-
 pub struct GfxState<'a> {
+    window_width: u32,
+    window_height: u32,
+    item_width: u32,
+    item_height: u32,
+    item_padding: u32,
     texture_creator: &'a TextureCreator<WindowContext>,
-    selected: usize,
+    selected: i32,
     textures: Option<Vec<Texture<'a>>>,
+    n_games: usize,
 }
 
 impl<'a> GfxState<'a> {
-    fn new(texture_creator: &'a TextureCreator<WindowContext>) -> Self {
+    fn new(
+        window_width: u32,
+        window_height: u32,
+        texture_creator: &'a TextureCreator<WindowContext>,
+    ) -> Self {
+        let item_padding = window_width / 32;
+        let item_width = (window_width + item_padding) / 8;
+        let item_height = item_width * 9 / 16;
+
         GfxState {
+            window_width,
+            window_height,
+            item_width,
+            item_height,
+            item_padding,
             texture_creator,
             selected: 0,
             textures: None,
+            n_games: 0,
         }
     }
 
-    /// Get reference to vector of textures.
-    ///
-    /// This will panic if unitialized.
-    fn get_textures(&self) -> &Vec<Texture<'a>> {
-        self.textures.as_ref().unwrap()
+    /// Shift selection right
+    fn selection_right(&mut self) {
+        self.selected += 1;
     }
 
-    /// Get reference to vector of textures.
-    ///
-    /// This will panic if unitialized.
-    fn get_textures_mut(&mut self) -> &mut Vec<Texture<'a>> {
-        self.textures.as_mut().unwrap()
+    /// Shift selection right
+    fn selection_left(&mut self) {
+        self.selected -= 1;
+    }
+
+    fn n_games(&self) -> usize {
+        self.n_games
+    }
+
+    fn selected(&self) -> usize {
+        (self.selected % self.n_games as i32) as usize
+    }
+
+    fn get_texture_mut(&mut self, index: usize) -> Option<&mut Texture<'a>> {
+        self.textures.as_mut().unwrap().get_mut(index)
     }
 
     /// Initialize textures
@@ -55,14 +79,41 @@ impl<'a> GfxState<'a> {
         // Don't re-initialize
         if self.textures.is_none() {
             let mut textures = Vec::with_capacity(n_games);
-            for i in 0..n_games {
+            for _ in 0..n_games {
                 let texture = self
                     .texture_creator
-                    .create_texture_static(None, TEXTURE_WIDTH, TEXTURE_HEIGHT)
+                    .create_texture_static(None, self.item_width, self.item_height)
                     .unwrap();
                 textures.push(texture);
             }
             self.textures = Some(textures);
+            self.n_games = n_games;
+        }
+    }
+
+    fn get_rectangle(&self, game_index: usize) -> Rect {
+        let y = self.window_height / 3;
+        let game_index_u32 = game_index as u32;
+        if game_index < self.selected() {
+            let x = self.item_padding + game_index_u32 * (self.item_padding + self.item_width);
+            Rect::new(x as i32, y as i32, self.item_width, self.item_height)
+        } else if game_index == self.selected() {
+            let x = self.item_padding + game_index_u32 * (self.item_padding + self.item_width);
+            let enlarged_item_width = self.item_width * 3 / 2;
+            let enlarged_item_height = self.item_height * 3 / 2;
+            Rect::new(
+                x as i32,
+                (y - (enlarged_item_height * 1 / 4)) as i32,
+                enlarged_item_width,
+                enlarged_item_height,
+            )
+        } else {
+            let enlarged_item_width = self.item_width * 3 / 2;
+            let x = self.item_padding
+                + enlarged_item_width + self.item_padding
+                + (game_index_u32) * (self.item_padding + self.item_width)
+                - (self.item_padding + self.item_width);
+            Rect::new(x as i32, y as i32, self.item_width, self.item_height)
         }
     }
 }
@@ -77,13 +128,13 @@ pub async fn main() -> Result<(), String> {
 
     // Get display mode
     let display_mode = video_subsystem.desktop_display_mode(0)?;
-    let display_width = display_mode.w as u32;
-    let display_height = display_mode.h as u32;
+    let window_width = display_mode.w as u32;
+    let window_height = display_mode.h as u32;
 
     // Initialize background and canvas
     let _image_context = sdl2::image::init(InitFlag::PNG | InitFlag::JPG)?;
     let window = video_subsystem
-        .window("Take Home", display_width, display_height)
+        .window("Take Home", window_width, window_height)
         .fullscreen()
         .position_centered()
         .build()
@@ -97,8 +148,6 @@ pub async fn main() -> Result<(), String> {
     let texture_creator = canvas.texture_creator();
     let background_texture = texture_creator.load_texture(background_path)?;
 
-    canvas.present();
-
     // Initialize MLB client
     let client = MlbClient::new();
 
@@ -109,7 +158,7 @@ pub async fn main() -> Result<(), String> {
     tokio::spawn(startup_task);
 
     // Initialize graphics state
-    let mut gfx_state = GfxState::new(&texture_creator);
+    let mut gfx_state = GfxState::new(window_width, window_height, &texture_creator);
 
     'mainloop: loop {
         // Reset canvas
@@ -131,22 +180,23 @@ pub async fn main() -> Result<(), String> {
                 gfx_state.init(n_games);
 
                 // Display games
-                for texture in gfx_state.get_textures_mut() {
-                    texture
-                        .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
-                        .map_err(|err| err.to_string())?;
-                    let rectangle = Rect::new(300, 300, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+                for i in 0..n_games {
+                    let rectangle = gfx_state.get_rectangle(i);
+                    let texture = gfx_state.get_texture_mut(i).unwrap();
+                    // texture
+                    //     .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
+                    //     .map_err(|err| err.to_string())?;
                     canvas.copy(texture, None, rectangle)?;
                 }
             }
             NetworkState::Done => {
                 // Display games
-                for texture in gfx_state.get_textures_mut() {
-                    texture
-                        .update(None, &[255; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
-                        .map_err(|err| err.to_string())?;
-                    let rectangle = Rect::new(300, 300, TEXTURE_WIDTH, TEXTURE_HEIGHT);
-                    println!("{:?}", rectangle);
+                for i in 0..gfx_state.n_games() {
+                    let rectangle = gfx_state.get_rectangle(i);
+                    let texture = gfx_state.get_texture_mut(i).unwrap();
+                    // texture
+                    //     .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
+                    //     .map_err(|err| err.to_string())?;
                     canvas.copy(texture, None, rectangle)?;
                 }
             }
@@ -167,14 +217,14 @@ pub async fn main() -> Result<(), String> {
                     ..
                 } => {
                     // Key right
-                    println!("pressed right");
+                    gfx_state.selection_right();
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Left),
                     ..
                 } => {
                     // Key left
-                    println!("pressed left");
+                    gfx_state.selection_left();
                 }
                 _ => {}
             }
