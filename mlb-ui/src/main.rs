@@ -329,7 +329,7 @@ pub async fn main() -> Result<(), String> {
             match &mut *network_state.lock() {
                 NetworkState::Error(err) => {
                     // TODO: Display error page
-                    printn!("{}", err);
+                    println!("{}", err);
                     break 'mainloop;
                 }
                 NetworkState::FetchingJson => {
