@@ -2,6 +2,7 @@ use client::{types::ItemMetadata, MlbClient};
 
 use futures::prelude::*;
 use parking_lot::Mutex;
+use time::Date;
 
 use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
 
@@ -10,14 +11,13 @@ const THUMBNAIL_PATH: &str = "./assets/thumbnails/";
 #[derive(Debug)]
 pub enum NetworkState {
     FetchingJson,
-    FetchingImages(Vec<ItemMetadata>, HashMap<usize, String>),
+    FetchingImages(Vec<ItemMetadata>, Vec<(usize, String)>),
     Error(String),
-    Done(Vec<ItemMetadata>, HashMap<usize, String>),
+    Done(Vec<ItemMetadata>, Vec<(usize, String)>),
 }
 
-pub async fn startup_procedure(client: MlbClient, state: Arc<Mutex<NetworkState>>) {
-    let example_date = time::date!(2018 - 06 - 10);
-    match client.get_schedule_via_date(&example_date).await {
+pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<NetworkState>>) {
+    match client.get_schedule_via_date(&date).await {
         Err(err) => {
             // Reached error state - no item_metadata data found
             *state.lock() = NetworkState::Error(err.to_string());
@@ -46,7 +46,7 @@ pub async fn startup_procedure(client: MlbClient, state: Arc<Mutex<NetworkState>
                 })
                 .collect();
 
-            let image_map = HashMap::with_capacity(item_metadatas.len());
+            let image_map = Vec::with_capacity(item_metadatas.len());
             *state.lock() = NetworkState::FetchingImages(item_metadatas, image_map);
 
             // Join all image fetching futures
@@ -69,7 +69,7 @@ pub async fn startup_procedure(client: MlbClient, state: Arc<Mutex<NetworkState>
                                     // If in fetching images state then insert image
                                     match &mut *state_inner.lock() {
                                         NetworkState::FetchingImages(_, image_map) => {
-                                            image_map.insert(i, file_path);
+                                            image_map.push((i, file_path));
                                         }
                                         _ => (),
                                     }
@@ -80,13 +80,17 @@ pub async fn startup_procedure(client: MlbClient, state: Arc<Mutex<NetworkState>
                 }));
             image_fetching.await;
 
-            let state = &mut *state.lock();
-            match state {
-                NetworkState::FetchingImages(item_metadatas, image_map) => {}
-                _ => {
-                    *state = NetworkState::Error("Unexpected state transition".to_string());
-                }
-            }
+            // let state = state.lock().get_mut();
+            // match state {
+            //     NetworkState::FetchingImages(item_metadatas, image_map) => {
+            //         // let item_metadatas = *item_metadatas;
+            //         // let image_map = *image_map;
+            //         state = NetworkState::Done(item_metadatas, image_map);
+            //     }
+            //     _ => {
+            //         *state = NetworkState::Error("Unexpected state transition".to_string());
+            //     }
+            // }
         }
     }
 }

@@ -142,8 +142,8 @@ impl<'a> GfxState<'a> {
         }
     }
 
-    async fn drain_images(&mut self, image_map: &mut HashMap<usize, String>) -> Result<(), String> {
-        for (i, image_path) in image_map.drain() {
+    async fn drain_images(&mut self, image_map: &mut Vec<(usize, String)>) -> Result<(), String> {
+        for (i, image_path) in image_map.drain(..) {
             self.textures.as_mut().unwrap()[i] =
                 self.texture_creator.load_texture(Path::new(&image_path))?;
         }
@@ -295,7 +295,8 @@ pub async fn main() -> Result<(), String> {
     // Initialize program state
     let network_state = Arc::new(Mutex::new(NetworkState::FetchingJson));
 
-    let startup_task = networking::startup_procedure(client.clone(), network_state.clone());
+    let default_date = time::date!(2018 - 06 - 10);
+    let startup_task = networking::startup_procedure(default_date, client.clone(), network_state.clone());
     tokio::spawn(startup_task);
 
     // Initialize graphics state
