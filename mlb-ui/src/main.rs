@@ -1,9 +1,9 @@
 pub mod networking;
 
-use client::{types::ThumbnailData, MlbClient};
+use client::{types::ItemMetadata, MlbClient};
 use networking::NetworkState;
 
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 use sdl2::{
     event::Event,
     image::{InitFlag, LoadTexture},
@@ -31,6 +31,8 @@ pub struct GfxState<'a> {
     shift: i32,
     textures: Option<Vec<Texture<'a>>>,
     n_games: usize,
+    item_metadata: Vec<ItemMetadata>,
+    images: Vec<Vec<u8>>,
 }
 
 impl<'a> GfxState<'a> {
@@ -40,7 +42,7 @@ impl<'a> GfxState<'a> {
         texture_creator: &'a TextureCreator<WindowContext>,
     ) -> Self {
         let item_padding = window_width / 40;
-        let item_width = window_width / 10;
+        let item_width = window_width / 8;
         let item_height = item_width * 9 / 16;
 
         GfxState {
@@ -54,6 +56,8 @@ impl<'a> GfxState<'a> {
             shift: 0,
             textures: None,
             n_games: 0,
+            item_metadata: Vec::with_capacity(16),
+            images: Vec::with_capacity(16),
         }
     }
 
@@ -66,12 +70,16 @@ impl<'a> GfxState<'a> {
             return;
         }
 
-        let selected_rectangle = self.get_rectangle(self.selected());
+        let selected_rectangle = self.get_item_rectangle(self.selected());
         if selected_rectangle.right() + (self.item_width / 2 + self.item_padding) as i32
             > self.window_width as i32
         {
             self.shift -= (self.item_width + self.item_padding) as i32;
         }
+    }
+
+    fn get_item_metadata(&self, index: usize) -> Option<&ItemMetadata> {
+        self.item_metadata.get(index)
     }
 
     /// Shift selection right
@@ -88,11 +96,11 @@ impl<'a> GfxState<'a> {
         }
 
         if self.selected() == self.n_games - 1 {
-            self.shift -= (self.n_games as i32 - 7) * (self.item_width + self.item_padding) as i32;
+            self.shift -= (self.n_games as i32 - 6) * (self.item_width + self.item_padding) as i32;
             return;
         }
 
-        let selected_rectangle = self.get_rectangle(self.selected());
+        let selected_rectangle = self.get_item_rectangle(self.selected());
         if selected_rectangle.left() < (self.item_width / 2 + self.item_padding) as i32 {
             self.shift += (self.item_width + self.item_padding) as i32;
         }
@@ -106,14 +114,17 @@ impl<'a> GfxState<'a> {
         self.selected
     }
 
-    fn get_texture_mut(&mut self, index: usize) -> Option<&mut Texture<'a>> {
+    fn get_item_texture_mut(&mut self, index: usize) -> Option<&mut Texture<'a>> {
         self.textures.as_mut().unwrap().get_mut(index)
     }
 
-    /// Initialize textures
-    fn init(&mut self, n_games: usize) {
+    /// Initialize graphics
+    fn init(&mut self, item_metadatas: &mut Vec<ItemMetadata>) {
         // Don't re-initialize
         if self.textures.is_none() {
+            let n_games = item_metadatas.len();
+
+            // Initialize textures
             let mut textures = Vec::with_capacity(n_games);
             for _ in 0..n_games {
                 let texture = self
@@ -124,10 +135,44 @@ impl<'a> GfxState<'a> {
             }
             self.textures = Some(textures);
             self.n_games = n_games;
+
+            // Take item_metadatas from network state
+            self.item_metadata.append(item_metadatas);
+
+            self.images = vec![vec![]; n_games];
         }
     }
 
-    fn get_rectangle(&self, game_index: usize) -> Rect {
+    fn drain_images(&mut self, image_map: &mut HashMap<usize, Result<Vec<u8>, String>>) {
+        for (i, image) in image_map.drain() {
+            if let Ok(image) = image {
+                self.images[i] = image;
+            }
+            // TODO: Handle error
+        }
+    }
+
+    // Return rectangles above and below selected item
+    fn get_selected_rectangles(&self) -> (Rect, Rect) {
+        let item_height_enlarged = self.item_height * 3 / 2;
+        let y = (self.window_height / 3 - item_height_enlarged / 4) as i32;
+        let height = self.item_width * 13 / 50;
+
+        let y1 = y - height as i32;
+        let y2 = y + item_height_enlarged as i32;
+
+        let x = self.shift
+            + self.item_padding as i32
+            + (self.selected as i32 * (self.item_padding + self.item_width) as i32);
+        let width = self.item_width * 3 / 2;
+
+        (
+            Rect::new(x, y1, width, height),
+            Rect::new(x, y2, width, height),
+        )
+    }
+
+    fn get_item_rectangle(&self, game_index: usize) -> Rect {
         let y = (self.window_height / 3) as i32;
         let game_index_i32 = game_index as i32;
         if game_index < self.selected() {
@@ -144,7 +189,7 @@ impl<'a> GfxState<'a> {
             let enlarged_item_width = self.item_width * 3 / 2;
             let enlarged_item_height = self.item_height * 3 / 2;
             Rect::new(
-                x as i32,
+                x,
                 y - (enlarged_item_height / 4) as i32,
                 enlarged_item_width,
                 enlarged_item_height,
@@ -158,7 +203,7 @@ impl<'a> GfxState<'a> {
                 + self.item_padding as i32
                 + (game_index_i32 * (self.item_padding + self.item_width) as i32)
                 - (self.item_padding + self.item_width) as i32;
-            Rect::new(x as i32, y as i32, self.item_width, self.item_height)
+            Rect::new(x, y, self.item_width, self.item_height)
         }
     }
 }
@@ -170,13 +215,20 @@ fn get_loading_texture<'a, 'ttf>(
 ) -> Result<Texture<'a>, String> {
     let now = Instant::now();
     let millis = now.duration_since(start).as_millis() % 1500;
-    let text = if millis < 1500 / 3 {
-        "Fetching Games.  "
+    if millis < 1500 / 3 {
+        get_text_texture("Fetching Games.  ", font, texture_creator)
     } else if millis < 1500 * 2 / 3 {
-        "Fetching Games.. "
+        get_text_texture("Fetching Games.. ", font, texture_creator)
     } else {
-        "Fetching Games..."
-    };
+        get_text_texture("Fetching Games...", font, texture_creator)
+    }
+}
+
+fn get_text_texture<'a, 'ttf>(
+    text: &str,
+    font: &Font<'ttf, 'static>,
+    texture_creator: &'a TextureCreator<WindowContext>,
+) -> Result<Texture<'a>, String> {
     let loading_surface = font
         .render(text)
         .blended(Color::RGBA(255, 255, 255, 255))
@@ -184,6 +236,11 @@ fn get_loading_texture<'a, 'ttf>(
     texture_creator
         .create_texture_from_surface(&loading_surface)
         .map_err(|e| e.to_string())
+}
+
+fn new_line_text(text: &str) -> String {
+    let length = text.len();
+    format!("{}\n{}", &text[..length/2], &text[length/2..]).to_string()
 }
 
 #[tokio::main]
@@ -220,7 +277,7 @@ pub async fn main() -> Result<(), String> {
     let client = MlbClient::new();
 
     // Initialize program state
-    let network_state = Arc::new(RwLock::new(NetworkState::FetchingJson));
+    let network_state = Arc::new(Mutex::new(NetworkState::FetchingJson));
 
     let startup_task = networking::startup_procedure(client.clone(), network_state.clone());
     tokio::spawn(startup_task);
@@ -229,21 +286,20 @@ pub async fn main() -> Result<(), String> {
     let mut gfx_state = GfxState::new(window_width, window_height, &texture_creator);
     let start_time = Instant::now();
 
-    // Load font
-    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
-    let mut font = ttf_context.load_font(Path::new(FONT_PATH), 256)?;
-    font.set_kerning(true);
-    // font.set_style(sdl2::ttf::FontStyle::);
-
     // Loading text rect
+    let loading_height = window_height * 13 / 250;
     let loading_width = window_width / 5;
-    let loading_height = window_height / 16;
     let loading_rect = Rect::new(
         (window_width - loading_width) as i32 / 2,
         (window_height - loading_height) as i32 / 2,
         loading_width,
         loading_height,
     );
+
+    // Load font context
+    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
+
+    let mut networking_complete = false;
 
     'mainloop: loop {
         // Reset canvas
@@ -252,40 +308,67 @@ pub async fn main() -> Result<(), String> {
         // Render background texture
         canvas.copy(&background_texture, None, None)?;
 
-        match &*network_state.read() {
-            NetworkState::Error => {
-                // Display error page
-            }
-            NetworkState::FetchingJson => {
-                // Displaying loading page
-                let loading_texture = get_loading_texture(&font, start_time, &texture_creator)?;
-                canvas.copy(&loading_texture, None, Some(loading_rect))?;
-            }
-            NetworkState::FetchingImages(thumbnails, image_map) => {
-                // Initialize if required
-                let n_games = thumbnails.len();
-                gfx_state.init(n_games);
-
-                // Display games
-                for i in 0..n_games {
-                    let rectangle = gfx_state.get_rectangle(i);
-                    let texture = gfx_state.get_texture_mut(i).unwrap(); // This is safe after initialization
-                                                                         // texture
-                                                                         //     .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
-                                                                         //     .map_err(|err| err.to_string())?;
-                    canvas.copy(texture, None, rectangle)?;
+        // Drain values from networking state
+        if !networking_complete {
+            match &mut *network_state.lock() {
+                NetworkState::Error(_) => {
+                    // Display error page
+                    break;
                 }
-            }
-            NetworkState::Done => {
-                // Display games
-                for i in 0..gfx_state.n_games() {
-                    let rectangle = gfx_state.get_rectangle(i);
-                    let texture = gfx_state.get_texture_mut(i).unwrap(); // This is safe after initialization
-                    canvas.copy(texture, None, rectangle)?;
+                NetworkState::FetchingJson => {
+                    // Displaying loading page
+                    let font = ttf_context.load_font(Path::new(FONT_PATH), loading_height as u16)?;
+                    let loading_texture = get_loading_texture(&font, start_time, &texture_creator)?;
+                    canvas.copy(&loading_texture, None, Some(loading_rect))?;
+                }
+                NetworkState::FetchingImages(item_metadatas, image_map) => {
+                    // Initialize if required
+                    gfx_state.init(item_metadatas);
+                    gfx_state.drain_images(image_map);
+                }
+                NetworkState::Done(item_metadatas, image_map) => {
+                    // Initialize if required
+                    gfx_state.init(item_metadatas);
+                    gfx_state.drain_images(image_map);
+                    networking_complete = true;
                 }
             }
         }
 
+
+        // Render
+        for i in 0..gfx_state.n_games() {
+            let rectangle = gfx_state.get_item_rectangle(i);
+            let texture = gfx_state.get_item_texture_mut(i).unwrap(); // This is safe after initialization
+                                                                      // texture
+                                                                      //     .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
+                                                                      //     .map_err(|err| err.to_string())?;
+            canvas.copy(texture, None, rectangle)?;
+
+            if i == gfx_state.selected {
+                // Display text
+                if let Some(item_metadata) = gfx_state.get_item_metadata(i) {
+                    let (header_rect, blurb_rect) = gfx_state.get_selected_rectangles();
+                    let text_height = header_rect.height() as u16;
+                    let font = ttf_context.load_font(Path::new(FONT_PATH), text_height)?;
+
+                    // Add header
+                    let header_texture =
+                        get_text_texture(item_metadata.headline.as_ref(), &font, &texture_creator)?;
+
+                    canvas.copy(&header_texture, None, Some(header_rect))?;
+
+                    // Add blurb
+                    let halved_blurb = new_line_text(item_metadata.blurb.as_ref());
+                    let blurb_texture =
+                        get_text_texture(&halved_blurb, &font, &texture_creator)?;
+
+                    canvas.copy(&blurb_texture, None, Some(blurb_rect))?;
+                }
+            }
+        }
+
+        // Triger render
         canvas.present();
 
         // Check events

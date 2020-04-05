@@ -61,7 +61,7 @@ pub struct Schedule {
 }
 
 #[derive(Debug)]
-pub struct ThumbnailData {
+pub struct ItemMetadata {
     pub date: String,
     pub headline: String,
     pub subhead: String,
@@ -70,10 +70,10 @@ pub struct ThumbnailData {
 }
 
 impl Schedule {
-    /// Compactify the JSON into the relevant thumbnail data.
+    /// Compactify the JSON into the relevant item_metadata data.
     ///
     /// This will filter out any games which have missing editorials.
-    pub fn into_thumbnail_data(self) -> Vec<Vec<ThumbnailData>> {
+    pub fn into_item_metadata_data(self) -> Vec<Vec<ItemMetadata>> {
         self.dates
             .into_iter()
             .map(move |item| {
@@ -88,7 +88,7 @@ impl Schedule {
                                 .into_iter()
                                 .map(move |(res, cut)| (res, cut.src))
                                 .collect();
-                            Some(ThumbnailData {
+                            Some(ItemMetadata {
                                 date: game.game_date,
                                 headline: mlb.headline,
                                 subhead: mlb.subhead,
