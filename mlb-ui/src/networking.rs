@@ -4,7 +4,7 @@ use futures::prelude::*;
 use parking_lot::Mutex;
 use time::Date;
 
-use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
+use std::sync::Arc;
 
 const THUMBNAIL_PATH: &str = "./assets/thumbnails/";
 
@@ -21,7 +21,6 @@ pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<N
         Err(err) => {
             // Reached error state - no item_metadata data found
             *state.lock() = NetworkState::Error(err.to_string());
-            return;
         }
         Ok(schedule) => {
             // Collect item_metadata data
@@ -55,6 +54,7 @@ pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<N
                     let client_inner = client.clone();
                     let state_inner = state.clone();
                     async move {
+                        // TODO: Check for cached image
                         if let Some(url) = url {
                             // Game had an editorial entry
                             let raw = client_inner
@@ -62,16 +62,13 @@ pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<N
                                 .await
                                 .map_err(|err| err.to_string());
                             if let Ok(raw) = raw {
-                                // Image get succeeded
+                                // Image received successfully
                                 let file_path = format!("{}{}.png", THUMBNAIL_PATH, id);
 
                                 if let Ok(()) = tokio::fs::write(&file_path, raw).await {
                                     // If in fetching images state then insert image
-                                    match &mut *state_inner.lock() {
-                                        NetworkState::FetchingImages(_, image_paths) => {
-                                            image_paths.push((i, file_path));
-                                        }
-                                        _ => (),
+                                    if let NetworkState::FetchingImages(_, image_paths) = &mut *state_inner.lock() {
+                                        image_paths.push((i, file_path));
                                     }
                                 }
                             }

@@ -15,7 +15,7 @@ use sdl2::{
     video::WindowContext,
 };
 
-use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
+use std::{cmp::Ordering, path::Path, sync::Arc, time::Instant};
 
 const BACKGROUND_PATH: &str = "./assets/background.jpg";
 const FONT_PATH: &str = "./assets/RobotoMono-Regular.ttf";
@@ -60,6 +60,14 @@ impl<'a> GfxState<'a> {
             n_games: 0,
             item_metadata: Vec::with_capacity(16),
         }
+    }
+
+    fn reset(&mut self) {
+        self.textures = None;
+        self.n_games = 0;
+        self.shift = 0;
+        self.selected = 0;
+        self.item_metadata = Vec::with_capacity(16);
     }
 
     /// Shift selection right
@@ -142,7 +150,7 @@ impl<'a> GfxState<'a> {
         }
     }
 
-    async fn drain_images(&mut self, image_paths: &mut Vec<(usize, String)>) -> Result<(), String> {
+    fn drain_images(&mut self, image_paths: &mut Vec<(usize, String)>) -> Result<(), String> {
         for (i, image_path) in image_paths.drain(..) {
             self.textures.as_mut().unwrap()[i] =
                 self.texture_creator.load_texture(Path::new(&image_path))?;
@@ -172,35 +180,39 @@ impl<'a> GfxState<'a> {
     fn get_item_rectangle(&self, game_index: usize) -> Rect {
         let y = (self.window_height / 3) as i32;
         let game_index_i32 = game_index as i32;
-        if game_index < self.selected() {
-            // Less than selected index
-            let x = self.shift
-                + self.item_padding as i32
-                + (game_index_i32 * (self.item_padding + self.item_width) as i32);
-            Rect::new(x, y, self.item_width, self.item_height)
-        } else if game_index == self.selected() {
-            // Selected index
-            let x = self.shift
-                + self.item_padding as i32
-                + (game_index_i32 * (self.item_padding + self.item_width) as i32);
-            let enlarged_item_width = self.item_width * 3 / 2;
-            let enlarged_item_height = self.item_height * 3 / 2;
-            Rect::new(
-                x,
-                y - (enlarged_item_height / 4) as i32,
-                enlarged_item_width,
-                enlarged_item_height,
-            )
-        } else {
-            // More than selected index
-            let enlarged_item_width = self.item_width as i32 * 3 / 2;
-            let x = self.shift
-                + self.item_padding as i32
-                + enlarged_item_width
-                + self.item_padding as i32
-                + (game_index_i32 * (self.item_padding + self.item_width) as i32)
-                - (self.item_padding + self.item_width) as i32;
-            Rect::new(x, y, self.item_width, self.item_height)
+        match game_index.cmp(&self.selected()) {
+            Ordering::Less => {
+                // Less than selected index
+                let x = self.shift
+                    + self.item_padding as i32
+                    + (game_index_i32 * (self.item_padding + self.item_width) as i32);
+                Rect::new(x, y, self.item_width, self.item_height)
+            }
+            Ordering::Equal => {
+                // Selected index
+                let x = self.shift
+                    + self.item_padding as i32
+                    + (game_index_i32 * (self.item_padding + self.item_width) as i32);
+                let enlarged_item_width = self.item_width * 3 / 2;
+                let enlarged_item_height = self.item_height * 3 / 2;
+                Rect::new(
+                    x,
+                    y - (enlarged_item_height / 4) as i32,
+                    enlarged_item_width,
+                    enlarged_item_height,
+                )
+            }
+            Ordering::Greater => {
+                // More than selected index
+                let enlarged_item_width = self.item_width as i32 * 3 / 2;
+                let x = self.shift
+                    + self.item_padding as i32
+                    + enlarged_item_width
+                    + self.item_padding as i32
+                    + (game_index_i32 * (self.item_padding + self.item_width) as i32)
+                    - (self.item_padding + self.item_width) as i32;
+                Rect::new(x, y, self.item_width, self.item_height)
+            }
         }
     }
 }
@@ -295,9 +307,9 @@ pub async fn main() -> Result<(), String> {
     // Initialize program state
     let network_state = Arc::new(Mutex::new(NetworkState::FetchingJson));
 
-    let default_date = time::date!(2018 - 06 - 10);
-    let startup_task = networking::startup_procedure(default_date, client.clone(), network_state.clone());
-    tokio::spawn(startup_task);
+    let mut date = time::date!(2018 - 06 - 10);
+    let task = networking::startup_procedure(date, client.clone(), network_state.clone());
+    tokio::spawn(task);
 
     // Initialize graphics state
     let mut gfx_state = GfxState::new(window_width, window_height, &texture_creator);
@@ -343,12 +355,12 @@ pub async fn main() -> Result<(), String> {
                 NetworkState::FetchingImages(item_metadatas, image_paths) => {
                     // Initialize if required
                     gfx_state.init(item_metadatas);
-                    gfx_state.drain_images(image_paths).await?;
+                    gfx_state.drain_images(image_paths)?;
                 }
                 NetworkState::Done(item_metadatas, image_paths) => {
                     // Initialize if required
                     gfx_state.init(item_metadatas);
-                    gfx_state.drain_images(image_paths).await?;
+                    gfx_state.drain_images(image_paths)?;
                     networking_complete = true;
                 }
             }
@@ -416,6 +428,42 @@ pub async fn main() -> Result<(), String> {
                     ..
                 } => {
                     gfx_state.selection_left();
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Down),
+                    ..
+                } => {
+                    // TODO: Remove this condition by terminating prior future early using channel
+                    if networking_complete {
+                        gfx_state.reset();
+                        *network_state.lock() = NetworkState::FetchingJson;
+                        networking_complete = false;
+                        date = date.next_day();
+                        let task = networking::startup_procedure(
+                            date,
+                            client.clone(),
+                            network_state.clone(),
+                        );
+                        tokio::spawn(task);
+                    }
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Up),
+                    ..
+                } => {
+                    // TODO: Remove this condition by terminating prior future early using channel
+                    if networking_complete {
+                        gfx_state.reset();
+                        *network_state.lock() = NetworkState::FetchingJson;
+                        networking_complete = false;
+                        date = date.previous_day();
+                        let task = networking::startup_procedure(
+                            date,
+                            client.clone(),
+                            network_state.clone(),
+                        );
+                        tokio::spawn(task);
+                    }
                 }
                 _ => {}
             }
