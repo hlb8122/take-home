@@ -29,10 +29,9 @@ pub struct GfxState<'a> {
     texture_creator: &'a TextureCreator<WindowContext>,
     selected: usize,
     shift: i32,
-    textures: Option<Vec<Texture<'a>>>,
     n_games: usize,
+    textures: Option<Vec<Texture<'a>>>,
     item_metadata: Vec<ItemMetadata>,
-    images: Vec<Vec<u8>>,
 }
 
 impl<'a> GfxState<'a> {
@@ -57,7 +56,6 @@ impl<'a> GfxState<'a> {
             textures: None,
             n_games: 0,
             item_metadata: Vec::with_capacity(16),
-            images: Vec::with_capacity(16),
         }
     }
 
@@ -138,18 +136,14 @@ impl<'a> GfxState<'a> {
 
             // Take item_metadatas from network state
             self.item_metadata.append(item_metadatas);
-
-            self.images = vec![vec![]; n_games];
         }
     }
 
-    fn drain_images(&mut self, image_map: &mut HashMap<usize, Result<Vec<u8>, String>>) {
-        for (i, image) in image_map.drain() {
-            if let Ok(image) = image {
-                self.images[i] = image;
-            }
-            // TODO: Handle error
+    async fn drain_images(&mut self, image_map: &mut HashMap<usize, String>) -> Result<(), String> {
+        for (i, image_path) in image_map.drain() {
+            self.textures.as_mut().unwrap()[i] = self.texture_creator.load_texture(Path::new(&image_path))?;
         }
+        Ok(())
     }
 
     // Return rectangles above and below selected item
@@ -240,7 +234,7 @@ fn get_text_texture<'a, 'ttf>(
 
 fn new_line_text(text: &str) -> String {
     let length = text.len();
-    format!("{}\n{}", &text[..length/2], &text[length/2..]).to_string()
+    format!("{}\n{}", &text[..length / 2], &text[length / 2..]).to_string()
 }
 
 #[tokio::main]
@@ -311,42 +305,41 @@ pub async fn main() -> Result<(), String> {
         // Drain values from networking state
         if !networking_complete {
             match &mut *network_state.lock() {
-                NetworkState::Error(_) => {
-                    // Display error page
-                    break;
+                NetworkState::Error(err) => {
+                    // TODO: Display error page
+                    println!("{}", err);
+                    break 'mainloop;
                 }
                 NetworkState::FetchingJson => {
                     // Displaying loading page
-                    let font = ttf_context.load_font(Path::new(FONT_PATH), loading_height as u16)?;
+                    let font =
+                        ttf_context.load_font(Path::new(FONT_PATH), loading_height as u16)?;
                     let loading_texture = get_loading_texture(&font, start_time, &texture_creator)?;
                     canvas.copy(&loading_texture, None, Some(loading_rect))?;
                 }
                 NetworkState::FetchingImages(item_metadatas, image_map) => {
                     // Initialize if required
                     gfx_state.init(item_metadatas);
-                    gfx_state.drain_images(image_map);
+                    gfx_state.drain_images(image_map).await?;
                 }
                 NetworkState::Done(item_metadatas, image_map) => {
                     // Initialize if required
                     gfx_state.init(item_metadatas);
-                    gfx_state.drain_images(image_map);
+                    gfx_state.drain_images(image_map).await?;
                     networking_complete = true;
                 }
             }
         }
 
-
-        // Render
+        // Add textures
         for i in 0..gfx_state.n_games() {
             let rectangle = gfx_state.get_item_rectangle(i);
             let texture = gfx_state.get_item_texture_mut(i).unwrap(); // This is safe after initialization
-                                                                      // texture
-                                                                      //     .update(None, &[0; N_TEXTURE_PIXELS], TEXTURE_WIDTH as usize)
-                                                                      //     .map_err(|err| err.to_string())?;
+
             canvas.copy(texture, None, rectangle)?;
 
             if i == gfx_state.selected {
-                // Display text
+                // Add text
                 if let Some(item_metadata) = gfx_state.get_item_metadata(i) {
                     let (header_rect, blurb_rect) = gfx_state.get_selected_rectangles();
                     let text_height = header_rect.height() as u16;
@@ -360,8 +353,7 @@ pub async fn main() -> Result<(), String> {
 
                     // Add blurb
                     let halved_blurb = new_line_text(item_metadata.blurb.as_ref());
-                    let blurb_texture =
-                        get_text_texture(&halved_blurb, &font, &texture_creator)?;
+                    let blurb_texture = get_text_texture(&halved_blurb, &font, &texture_creator)?;
 
                     canvas.copy(&blurb_texture, None, Some(blurb_rect))?;
                 }

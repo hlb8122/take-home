@@ -44,6 +44,7 @@ pub struct Content {
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Game {
+    pub game_pk: u32,
     pub game_date: String,
     pub content: Content,
 }
@@ -63,6 +64,7 @@ pub struct Schedule {
 #[derive(Debug)]
 pub struct ItemMetadata {
     pub date: String,
+    pub id: u32,
     pub headline: String,
     pub subhead: String,
     pub blurb: String,
@@ -80,6 +82,7 @@ impl Schedule {
                 item.games
                     .into_iter()
                     .filter_map(move |game| {
+                        let id = game.game_pk;
                         if let Some(editorial) = game.content.editorial {
                             let mlb = editorial.recap.mlb;
                             let photos = mlb
@@ -89,6 +92,7 @@ impl Schedule {
                                 .map(move |(res, cut)| (res, cut.src))
                                 .collect();
                             Some(ItemMetadata {
+                                id,
                                 date: game.game_date,
                                 headline: mlb.headline,
                                 subhead: mlb.subhead,

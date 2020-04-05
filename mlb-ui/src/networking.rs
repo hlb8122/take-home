@@ -3,14 +3,16 @@ use client::{types::ItemMetadata, MlbClient};
 use futures::prelude::*;
 use parking_lot::Mutex;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
+
+const THUMBNAIL_PATH: &str = "./assets/thumbnail/";
 
 #[derive(Debug)]
 pub enum NetworkState {
     FetchingJson,
-    FetchingImages(Vec<ItemMetadata>, HashMap<usize, Result<Vec<u8>, String>>),
+    FetchingImages(Vec<ItemMetadata>, HashMap<usize, String>),
     Error(String),
-    Done(Vec<ItemMetadata>, HashMap<usize, Result<Vec<u8>, String>>),
+    Done(Vec<ItemMetadata>, HashMap<usize, String>),
 }
 
 pub async fn startup_procedure(client: MlbClient, state: Arc<Mutex<NetworkState>>) {
@@ -34,37 +36,48 @@ pub async fn startup_procedure(client: MlbClient, state: Arc<Mutex<NetworkState>
             };
 
             // Collect image URLs
-            let image_urls: Vec<Option<String>> = item_metadatas
+            let image_urls: Vec<(u32, Option<String>)> = item_metadatas
                 .iter()
-                .map(move |item_metadata| item_metadata.photos.get("684x385").cloned())
+                .map(move |item_metadata| {
+                    (
+                        item_metadata.id,
+                        item_metadata.photos.get("684x385").cloned(),
+                    )
+                })
                 .collect();
 
             let image_map = HashMap::with_capacity(item_metadatas.len());
             *state.lock() = NetworkState::FetchingImages(item_metadatas, image_map);
 
             // Join all image fetching futures
-            let image_fetching = future::join_all(image_urls.iter().enumerate().map(|(i, url)| {
-                let client_inner = client.clone();
-                let state_inner = state.clone();
-                async move {
-                    let image_raw = if let Some(url) = url {
-                        client_inner
-                            .get_image(url)
-                            .await
-                            .map_err(|err| err.to_string())
-                    } else {
-                        Err("URL not found".to_string())
-                    };
+            let image_fetching =
+                future::join_all(image_urls.iter().enumerate().map(|(i, (id, url))| {
+                    let client_inner = client.clone();
+                    let state_inner = state.clone();
+                    async move {
+                        if let Some(url) = url {
+                            // Game had an editorial entry
+                            let raw = client_inner
+                                .get_image(url)
+                                .await
+                                .map_err(|err| err.to_string());
+                            if let Ok(raw) = raw {
+                                // Image get succeeded
+                                let file_path = format!("{}{}.png", THUMBNAIL_PATH, id);
 
-                    // If in fetching images state then insert image
-                    match &mut *state_inner.lock() {
-                        NetworkState::FetchingImages(_, image_map) => {
-                            image_map.insert(i, image_raw);
-                        }
-                        _ => (),
+                                if let Ok(()) = tokio::fs::write(&file_path, raw).await {
+                                    // If in fetching images state then insert image
+                                    match &mut *state_inner.lock() {
+                                        NetworkState::FetchingImages(_, image_map) => {
+                                            image_map.insert(i, file_path);
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                            }
+                        };
                     }
-                }
-            }));
+                }));
             image_fetching.await;
 
             let state = &mut *state.lock();
