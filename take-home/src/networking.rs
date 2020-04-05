@@ -4,7 +4,7 @@ use futures::prelude::*;
 use parking_lot::Mutex;
 use time::Date;
 
-use std::sync::Arc;
+use std::{sync::Arc, path::Path, fs};
 
 const THUMBNAIL_PATH: &str = "./assets/thumbnails/";
 
@@ -17,6 +17,11 @@ pub enum NetworkState {
 }
 
 pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<NetworkState>>) {
+    // Create thumbnail path if missing
+    if !Path::new(THUMBNAIL_PATH).exists() {
+        fs::create_dir_all(THUMBNAIL_PATH).unwrap(); // Unrecoverable
+    }
+
     match client.get_schedule_via_date(&date).await {
         Err(err) => {
             // Reached error state - no item_metadata data found
