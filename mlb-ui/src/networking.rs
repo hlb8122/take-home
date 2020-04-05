@@ -46,8 +46,8 @@ pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<N
                 })
                 .collect();
 
-            let image_map = Vec::with_capacity(item_metadatas.len());
-            *state.lock() = NetworkState::FetchingImages(item_metadatas, image_map);
+            let image_paths = Vec::with_capacity(item_metadatas.len());
+            *state.lock() = NetworkState::FetchingImages(item_metadatas, image_paths);
 
             // Join all image fetching futures
             let image_fetching =
@@ -68,8 +68,8 @@ pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<N
                                 if let Ok(()) = tokio::fs::write(&file_path, raw).await {
                                     // If in fetching images state then insert image
                                     match &mut *state_inner.lock() {
-                                        NetworkState::FetchingImages(_, image_map) => {
-                                            image_map.push((i, file_path));
+                                        NetworkState::FetchingImages(_, image_paths) => {
+                                            image_paths.push((i, file_path));
                                         }
                                         _ => (),
                                     }
@@ -80,17 +80,17 @@ pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<N
                 }));
             image_fetching.await;
 
-            // let state = state.lock().get_mut();
-            // match state {
-            //     NetworkState::FetchingImages(item_metadatas, image_map) => {
-            //         // let item_metadatas = *item_metadatas;
-            //         // let image_map = *image_map;
-            //         state = NetworkState::Done(item_metadatas, image_map);
-            //     }
-            //     _ => {
-            //         *state = NetworkState::Error("Unexpected state transition".to_string());
-            //     }
-            // }
+            // TODO: Speed this up
+            let state_lock = &mut *state.lock();
+            if let NetworkState::FetchingImages(item_metadata, image_paths) = state_lock {
+                let mut new_meta = Vec::new();
+                new_meta.append(item_metadata);
+                let mut new_paths = Vec::new();
+                new_paths.append(image_paths);
+                *state_lock = NetworkState::Done(new_meta, new_paths);
+            } else {
+                *state_lock = NetworkState::Error("unexpected state transition".to_string());
+            };
         }
     }
 }

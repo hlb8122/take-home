@@ -142,8 +142,8 @@ impl<'a> GfxState<'a> {
         }
     }
 
-    async fn drain_images(&mut self, image_map: &mut Vec<(usize, String)>) -> Result<(), String> {
-        for (i, image_path) in image_map.drain(..) {
+    async fn drain_images(&mut self, image_paths: &mut Vec<(usize, String)>) -> Result<(), String> {
+        for (i, image_path) in image_paths.drain(..) {
             self.textures.as_mut().unwrap()[i] =
                 self.texture_creator.load_texture(Path::new(&image_path))?;
         }
@@ -340,15 +340,15 @@ pub async fn main() -> Result<(), String> {
                     let loading_texture = get_loading_texture(&font, start_time, &texture_creator)?;
                     canvas.copy(&loading_texture, None, Some(loading_rect))?;
                 }
-                NetworkState::FetchingImages(item_metadatas, image_map) => {
+                NetworkState::FetchingImages(item_metadatas, image_paths) => {
                     // Initialize if required
                     gfx_state.init(item_metadatas);
-                    gfx_state.drain_images(image_map).await?;
+                    gfx_state.drain_images(image_paths).await?;
                 }
-                NetworkState::Done(item_metadatas, image_map) => {
+                NetworkState::Done(item_metadatas, image_paths) => {
                     // Initialize if required
                     gfx_state.init(item_metadatas);
-                    gfx_state.drain_images(image_map).await?;
+                    gfx_state.drain_images(image_paths).await?;
                     networking_complete = true;
                 }
             }
