@@ -10,7 +10,7 @@ use sdl2::{
     keyboard::Keycode,
     pixels::Color,
     rect::Rect,
-    render::{RenderTarget, Texture, TextureCreator},
+    render::{Texture, TextureCreator},
     ttf::Font,
     video::WindowContext,
 };
@@ -19,6 +19,9 @@ use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
 
 const BACKGROUND_PATH: &str = "./assets/background.jpg";
 const FONT_PATH: &str = "./assets/RobotoMono-Regular.ttf";
+
+const HEADER_TEXT_HEIGHT: u32 = 24;
+const BLURB_TEXT_HEIGHT: u32 = 20;
 
 pub struct GfxState<'a> {
     window_width: u32,
@@ -141,7 +144,8 @@ impl<'a> GfxState<'a> {
 
     async fn drain_images(&mut self, image_map: &mut HashMap<usize, String>) -> Result<(), String> {
         for (i, image_path) in image_map.drain() {
-            self.textures.as_mut().unwrap()[i] = self.texture_creator.load_texture(Path::new(&image_path))?;
+            self.textures.as_mut().unwrap()[i] =
+                self.texture_creator.load_texture(Path::new(&image_path))?;
         }
         Ok(())
     }
@@ -150,9 +154,8 @@ impl<'a> GfxState<'a> {
     fn get_selected_rectangles(&self) -> (Rect, Rect) {
         let item_height_enlarged = self.item_height * 3 / 2;
         let y = (self.window_height / 3 - item_height_enlarged / 4) as i32;
-        let height = self.item_width * 13 / 50;
 
-        let y1 = y - height as i32;
+        let y1 = y - HEADER_TEXT_HEIGHT as i32;
         let y2 = y + item_height_enlarged as i32;
 
         let x = self.shift
@@ -161,8 +164,8 @@ impl<'a> GfxState<'a> {
         let width = self.item_width * 3 / 2;
 
         (
-            Rect::new(x, y1, width, height),
-            Rect::new(x, y2, width, height),
+            Rect::new(x, y1, width, HEADER_TEXT_HEIGHT),
+            Rect::new(x, y2, width, BLURB_TEXT_HEIGHT),
         )
     }
 
@@ -232,9 +235,28 @@ fn get_text_texture<'a, 'ttf>(
         .map_err(|e| e.to_string())
 }
 
-fn new_line_text(text: &str) -> String {
-    let length = text.len();
-    format!("{}\n{}", &text[..length / 2], &text[length / 2..]).to_string()
+fn new_line_splitter<'ttf>(
+    text: &str,
+    font: &Font<'ttf, 'static>,
+    target_height: u32,
+    line_width: u32,
+) -> Result<Vec<String>, String> {
+    let mut lines = Vec::with_capacity(3);
+    let mut line = String::new();
+    let mut line_len = 0;
+    for word in text.split_whitespace() {
+        let (width, height) = font.size_of(word).map_err(|err| err.to_string())?;
+        let new_len = width * target_height / height;
+        if new_len + line_len > line_width {
+            lines.push(line);
+            line = format!("{} ", word);
+            line_len = new_len;
+        } else {
+            line = format!("{} {}", line, word);
+            line_len += new_len;
+        }
+    }
+    Ok(lines)
 }
 
 #[tokio::main]
@@ -307,7 +329,7 @@ pub async fn main() -> Result<(), String> {
             match &mut *network_state.lock() {
                 NetworkState::Error(err) => {
                     // TODO: Display error page
-                    println!("{}", err);
+                    printn!("{}", err);
                     break 'mainloop;
                 }
                 NetworkState::FetchingJson => {
@@ -341,7 +363,7 @@ pub async fn main() -> Result<(), String> {
             if i == gfx_state.selected {
                 // Add text
                 if let Some(item_metadata) = gfx_state.get_item_metadata(i) {
-                    let (header_rect, blurb_rect) = gfx_state.get_selected_rectangles();
+                    let (header_rect, mut blurb_rect) = gfx_state.get_selected_rectangles();
                     let text_height = header_rect.height() as u16;
                     let font = ttf_context.load_font(Path::new(FONT_PATH), text_height)?;
 
@@ -352,10 +374,18 @@ pub async fn main() -> Result<(), String> {
                     canvas.copy(&header_texture, None, Some(header_rect))?;
 
                     // Add blurb
-                    let halved_blurb = new_line_text(item_metadata.blurb.as_ref());
-                    let blurb_texture = get_text_texture(&halved_blurb, &font, &texture_creator)?;
+                    let lines = new_line_splitter(
+                        item_metadata.blurb.as_ref(),
+                        &font,
+                        BLURB_TEXT_HEIGHT,
+                        blurb_rect.width(),
+                    )?;
+                    for line in lines {
+                        blurb_rect.set_y(blurb_rect.y() + blurb_rect.height() as i32);
 
-                    canvas.copy(&blurb_texture, None, Some(blurb_rect))?;
+                        let blurb_texture = get_text_texture(&line, &font, &texture_creator)?;
+                        canvas.copy(&blurb_texture, None, Some(blurb_rect))?;
+                    }
                 }
             }
         }

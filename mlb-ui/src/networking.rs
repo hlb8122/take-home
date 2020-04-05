@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 
 use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
 
-const THUMBNAIL_PATH: &str = "./assets/thumbnail/";
+const THUMBNAIL_PATH: &str = "./assets/thumbnails/";
 
 #[derive(Debug)]
 pub enum NetworkState {
