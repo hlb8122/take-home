@@ -67,7 +67,9 @@ pub async fn startup_procedure(date: Date, client: MlbClient, state: Arc<Mutex<N
 
                                 if let Ok(()) = tokio::fs::write(&file_path, raw).await {
                                     // If in fetching images state then insert image
-                                    if let NetworkState::FetchingImages(_, image_paths) = &mut *state_inner.lock() {
+                                    if let NetworkState::FetchingImages(_, image_paths) =
+                                        &mut *state_inner.lock()
+                                    {
                                         image_paths.push((i, file_path));
                                     }
                                 }

@@ -1,5 +1,5 @@
 [workspace]
 members = [
     "mlb-client",
-    "mlb-ui"
+    "take-home"
 ]
