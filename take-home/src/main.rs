@@ -193,14 +193,18 @@ pub async fn main() -> Result<(), String> {
                     keycode: Some(Keycode::Right),
                     ..
                 } => {
-                    gfx_state.selection_right();
+                    if *network_state.lock() != NetworkState::FetchingJson {
+                        gfx_state.selection_right();
+                    }
                 }
                 // Key left
                 Event::KeyDown {
                     keycode: Some(Keycode::Left),
                     ..
                 } => {
-                    gfx_state.selection_left();
+                    if *network_state.lock() != NetworkState::FetchingJson {
+                        gfx_state.selection_left();
+                    }
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Down),

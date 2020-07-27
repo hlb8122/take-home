@@ -4,11 +4,11 @@ use futures::prelude::*;
 use parking_lot::Mutex;
 use time::Date;
 
-use std::{sync::Arc, path::Path, fs};
+use std::{fs, path::Path, sync::Arc};
 
 const THUMBNAIL_PATH: &str = "./assets/thumbnails/";
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum NetworkState {
     FetchingJson,
     FetchingImages(Vec<ItemMetadata>, Vec<(usize, String)>),

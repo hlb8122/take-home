@@ -61,7 +61,7 @@ pub struct Schedule {
     pub dates: Vec<DateItem>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ItemMetadata {
     pub date: String,
     pub id: u32,

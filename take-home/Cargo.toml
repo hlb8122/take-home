@@ -7,8 +7,8 @@ edition = "2018"
 [dependencies]
 client = { package = 'mlb-client',  path = '../mlb-client' }
 
-futures = "0.3.4"
-parking_lot = "0.10.0"
-sdl2 = { version = "0.33.0", features = ["image", "ttf"] }
-time = "0.2.9"
-tokio = { version = "0.2.16", features = ["macros", "rt-threaded", "fs"] }
+futures = "0.3.5"
+parking_lot = "0.11.0"
+sdl2 = { version = "0.34.2", features = ["image", "ttf"] }
+time = "0.2.16"
+tokio = { version = "0.2.22", features = ["macros", "rt-threaded", "fs"] }
